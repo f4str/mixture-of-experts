@@ -7,10 +7,10 @@ Densely Gated
 
 import tensorflow as tf
 from tensorflow.examples.tutorials.mnist import input_data
-from mnist_networks import LeNet, FeedForward
+from mnist_networks import LeNet, FeedForward, linear_layer
 
 
-class MOE:
+class MoE:
 	def __init__(self, num_experts=5):
 		self.sess = tf.Session()
 		
@@ -37,18 +37,17 @@ class MOE:
 			self.x = tf.placeholder(tf.float32, [None, self.num_inputs], name='x')
 			self.y = tf.placeholder(tf.float32, [None, self.num_classes], name='y')
 		
-		self.networks = [LeNet() for _ in range(self.num_experts)]
-		experts = tf.stack([net.logits for net in self.networks], axis=-1)
+		gate_activations = linear_layer(self.x, self.num_classes * (self.num_experts + 1), relu=False)
+		gating_distribution = tf.nn.softmax(tf.reshape(gate_activations, [-1, self.num_experts + 1]))
 		
-		w_g = tf.Variable(tf.zeros([self.num_inputs, self.num_experts]))
-		gates = tf.nn.softmax(tf.matmul(self.x, w_g))
-		gates = tf.expand_dims(gates, axis=1)
+		expert_activations = linear_layer(self.x, self.num_classes * self.num_experts, relu=False)
+		expert_distribution = tf.nn.sigmoid(tf.reshape(expert_activations, [-1, self.num_experts]))
 		
-		self.logits = tf.reduce_sum(tf.multiply(experts, gates), axis=-1)
+		final_probabilities = tf.reduce_sum(gating_distribution[:, :self.num_experts] * expert_distribution, 1)
+		self.logits = tf.reshape(final_probabilities, [-1, self.num_classes])
 		
 		cross_entropy = tf.nn.softmax_cross_entropy_with_logits_v2(logits=self.logits, labels=self.y)
 		self.loss = tf.reduce_mean(cross_entropy)
-		
 		self.optimizer = tf.train.AdamOptimizer(learning_rate=0.001).minimize(self.loss)
 		
 		self.prediction = tf.argmax(self.logits, axis=1)
@@ -56,7 +55,7 @@ class MOE:
 		self.accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
 		self.predict = tf.nn.softmax(self.logits)
 		
-	def train(self, epochs=500):
+	def train(self, epochs):
 		self.sess.run(tf.global_variables_initializer())
 		
 		for e in range(epochs):
@@ -74,13 +73,15 @@ class MOE:
 				f'valid loss = {valid_loss:.4f},',
 				f'valid acc = {valid_acc:.4f}'
 			)
+		
 		print('training complete')
 		
 		feed_dict = {self.x: self.X_test, self.y: self.y_test}
+		
 		loss, acc = self.sess.run([self.loss, self.accuracy], feed_dict=feed_dict)
 		print(f'test loss = {loss:.4f}, test acc = {acc:.4f}')
 
 
 if __name__ == '__main__':
-	model = MOE()
-	model.train(20)
+	model = MoE()
+	model.train(1000)
